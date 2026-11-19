@@ -1,0 +1,53 @@
+name: QR ve alan adi kontrolu
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # her gün 07:17 (İstanbul)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Kontrol
+        id: run
+        run: python3 check.py
+        continue-on-error: true
+
+      - name: Sorun varsa issue ac (sahibine e-posta gider)
+        if: steps.run.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          open=$(gh issue list --label alarm --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body-file report.md
+          else
+            gh label create alarm --color B60205 2>/dev/null || true
+            gh issue create --title "ALARM: orlexglobal.com QR kontrolu basarisiz" --label alarm --body-file report.md
+          fi
+
+      # GitHub, 60 gun hareketsiz depolarda zamanlanmis kontrolleri durdurur.
+      # Son kontrol tarihini yazmak depoyu aktif tutar.
+      - name: Son kontrolu kaydet
+        run: |
+          cp report.md last-check.md
+          git config user.name "orlex-monitor"
+          git config user.email "actions@users.noreply.github.com"
+          git add last-check.md
+          git diff --cached --quiet || git commit -m "Kontrol $(date -u +%F)"
+          git push
+
+      - name: Sonuc
+        if: steps.run.outcome == 'failure'
+        run: exit 1
